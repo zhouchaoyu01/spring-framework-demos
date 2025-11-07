@@ -15,6 +15,7 @@
     <modules>
         <module>data-access</module>
         <module>data-compare</module>
+        <module>data-compare2</module>
     </modules>
 
     <properties>

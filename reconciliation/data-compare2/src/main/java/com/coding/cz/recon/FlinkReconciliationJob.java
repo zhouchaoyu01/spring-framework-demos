@@ -40,6 +40,9 @@ import java.util.stream.Collectors;
  * <p>
  * 说明：为便于在你的工程中快速集成，代码尽量使用你提供的 DataRecord、ReconciliationDiff 概念。
  * 在生产中请替换为你的真实实体加载（例如从 DB 加载 ReconciliationRuleEntity、DataSourceEntity 等）。
+ *
+ *
+ * --add-opens java.base/java.util=ALL-UNNAMED
  */
 @Slf4j
 public class FlinkReconciliationJob {

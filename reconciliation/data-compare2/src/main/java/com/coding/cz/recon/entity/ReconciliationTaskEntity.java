@@ -55,14 +55,9 @@ public class ReconciliationTaskEntity implements java.io.Serializable{
     @Column(name = "update_time", nullable = false)
     private LocalDateTime updateTime;
 
-    // 关联数据源（可选，用于查询）
-//    @ManyToOne(fetch = FetchType.LAZY)
-//    @JoinColumn(name = "source_data_source_id", insertable = false, updatable = false)
     @Transient
     private DataSourceEntity sourceDataSource;
 
-//    @ManyToOne(fetch = FetchType.LAZY)
-//    @JoinColumn(name = "target_data_source_id", insertable = false, updatable = false)
     @Transient
     private DataSourceEntity targetDataSource;
 

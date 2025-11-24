@@ -6,56 +6,53 @@ package com.coding.cz.recon.dto;
  * @Date: 2025-10-30
  */
 
-import lombok.*;
-
 /**
  * 对账差异记录载体
  */
 
+import com.coding.cz.recon.FlinkReconciliationJob;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 
+
+        import lombok.Builder;
+        import lombok.NoArgsConstructor;
+
+import java.io.Serializable;
+
 /**
- * Flink对账过程中产生的差异信息（非数据库实体，仅内存中传递）
+ * 对账差异结果实体
+ * 统一所有差异类型的输出格式
  */
 @Data
-@AllArgsConstructor
+@Builder
 @NoArgsConstructor
-public class ReconciliationDiff implements java.io.Serializable{
-    public static final long serialVersionUID = 1L;
-
-
-    // 差异类型：SOURCE_ONLY（源表单边）、TARGET_ONLY（目标表单边）、FIELD_MISMATCH（字段不匹配）
-    private String type;
-    // 连接主键组合值（如"123"或"1001_2025001"）
+@AllArgsConstructor
+public  class ReconciliationDiff implements java.io.Serializable {
+    private static final long serialVersionUID = 1L;
+    private String diffType;
     private String joinKeyValue;
-    // 不匹配的字段名（仅FIELD_MISMATCH时有值，如"amount"）
     private String mismatchField;
-    // 源表字段值（仅FIELD_MISMATCH时有值）
     private String sourceValue;
-    // 目标表字段值（仅FIELD_MISMATCH时有值）
     private String targetValue;
-    // 关联的任务ID
     private Long taskId;
+    private String description;
 
-    // 工厂方法：创建源表单边差异
+    public static ReconciliationDiff match(String joinKeyValue, Long taskId) {
+        return ReconciliationDiff.builder().diffType("MATCH").joinKeyValue(joinKeyValue).taskId(taskId).description("记录匹配").build();
+    }
+
+    public static ReconciliationDiff fieldMismatch(String joinKeyValue, String mismatchField, String sourceValue, String targetValue, Long taskId) {
+        return ReconciliationDiff.builder().diffType("FIELD_MISMATCH").joinKeyValue(joinKeyValue).mismatchField(mismatchField)
+                .sourceValue(sourceValue).targetValue(targetValue).taskId(taskId).description("字段不匹配").build();
+    }
+
     public static ReconciliationDiff sourceOnly(String joinKeyValue, Long taskId) {
-        return new ReconciliationDiff("SOURCE_ONLY", joinKeyValue, null, null, null, taskId);
+        return ReconciliationDiff.builder().diffType("SOURCE_ONLY").joinKeyValue(joinKeyValue).taskId(taskId).description("源表有记录，目标表无记录").build();
     }
 
-    // 工厂方法：创建目标表单边差异
     public static ReconciliationDiff targetOnly(String joinKeyValue, Long taskId) {
-        return new ReconciliationDiff("TARGET_ONLY", joinKeyValue, null, null, null, taskId);
-    }
-
-    // 工厂方法：创建字段不匹配差异
-    public static ReconciliationDiff fieldMismatch(
-            String joinKeyValue,
-            String mismatchField,
-            String sourceValue,
-            String targetValue,
-            Long taskId
-    ) {
-        return new ReconciliationDiff("FIELD_MISMATCH", joinKeyValue, mismatchField, sourceValue, targetValue, taskId);
+        return ReconciliationDiff.builder().diffType("TARGET_ONLY").joinKeyValue(joinKeyValue).taskId(taskId).description("目标表有记录，源表无记录").build();
     }
 }
+

@@ -3,66 +3,122 @@ package com.coding.cz.recon.entity;
 /**
  * @description <>
  * @author: zhouchaoyu
- * @Date: 2025-10-30
+ * @Date: 2025-11-12
  */
+
+
+import com.coding.cz.recon.dto.ReconciliationDiff;
 import jakarta.persistence.*;
 import lombok.Data;
+
 import java.time.LocalDateTime;
 
+/**
+ * 对账差异记录表实体类
+ * 对应数据库表：rdc_reconciliation_difference_record
+ */
 @Data
 @Entity
-@Table(name = "rdc_difference_record", indexes = {
-        @Index(name = "idx_task_id", columnList = "task_id"),
-        @Index(name = "idx_status", columnList = "status"),
-        @Index(name = "idx_discovery_time", columnList = "discovery_time")
-})
+@Table(name = "rdc_reconciliation_difference_record")
 public class DifferenceRecordEntity implements java.io.Serializable{
-    private static final long serialVersionUID = 1L;
+
+    /**
+     * 主键ID
+     */
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "difference_no", nullable = false, unique = true, length = 50)
-    private String differenceNo;
+    /**
+     * 关联执行记录ID
+     */
+    @Column(name = "execution_record_id", nullable = false)
+    private Long executionRecordId;
 
+    /**
+     * 差异类型：
+     * - MATCH: 匹配
+     * - FIELD_MISMATCH: 字段不匹配
+     * - SOURCE_ONLY: 源表有记录，目标表无记录
+     * - TARGET_ONLY: 目标表有记录，源表无记录
+     */
+    @Column(name = "diff_type", nullable = false, length = 20)
+    @Enumerated(EnumType.STRING)
+    private DiffType diffType;
+
+    /**
+     * 连接键值（如order_id的值）
+     */
+    @Column(name = "join_key_value", nullable = false, length = 200)
+    private String joinKeyValue;
+
+    /**
+     * 不匹配的字段名（多个用逗号分隔）
+     */
+    @Column(name = "mismatch_field", length = 200)
+    private String mismatchField;
+
+    /**
+     * 源表字段值
+     */
+    @Column(name = "source_value", length = 500)
+    private String sourceValue;
+
+    /**
+     * 目标表字段值
+     */
+    @Column(name = "target_value", length = 500)
+    private String targetValue;
+
+    /**
+     * 对账任务ID
+     */
     @Column(name = "task_id", nullable = false)
     private Long taskId;
 
-    @Column(nullable = false, length = 50)
-    private String type; // SOURCE_ONLY/TARGET_ONLY/AMOUNT_MISMATCH等
+    /**
+     * 差异描述
+     */
+    @Column(name = "description", length = 500)
+    private String description;
 
-    @Column(name = "source_data_id", length = 100)
-    private String sourceDataId;
+    /**
+     * 创建时间
+     */
+    @Column(name = "create_time", nullable = false, updatable = false)
+    private LocalDateTime createTime;
 
-    @Column(name = "target_data_id", length = 100)
-    private String targetDataId;
+    /**
+     * 差异类型枚举
+     */
+    public enum DiffType {
+        MATCH,              // 匹配
+        FIELD_MISMATCH,     // 字段不匹配
+        SOURCE_ONLY,        // 源表有记录，目标表无记录
+        TARGET_ONLY         // 目标表有记录，源表无记录
+    }
 
-    @Column(name = "mismatch_field", length = 100)
-    private String mismatchField;
-
-    @Column(name = "source_value", columnDefinition = "text")
-    private String sourceValue;
-
-    @Column(name = "target_value", columnDefinition = "text")
-    private String targetValue;
-
-    @Column(nullable = false)
-    private Integer status; // 1-待处理，2-已处理，3-已忽略
-
-    @Column(name = "discovery_time", nullable = false)
-    private LocalDateTime discoveryTime;
-
-    @Column(name = "handle_user_id")
-    private Long handleUserId;
-
-    @Column(name = "handle_time")
-    private LocalDateTime handleTime;
-
-    @Column(name = "handle_remark", columnDefinition = "text")
-    private String handleRemark;
-
+    /**
+     * 自动设置创建时间
+     */
     @PrePersist
-    public void prePersist() {
-        this.discoveryTime = LocalDateTime.now();
+    protected void onCreate() {
+        createTime = LocalDateTime.now();
+    }
+
+    /**
+     * 从ReconciliationDiff转换为实体类
+     */
+    public static DifferenceRecordEntity fromDiff(ReconciliationDiff diff, Long executionRecordId) {
+        DifferenceRecordEntity entity = new DifferenceRecordEntity();
+        entity.setExecutionRecordId(executionRecordId);
+        entity.setDiffType(DiffType.valueOf(diff.getDiffType()));
+        entity.setJoinKeyValue(diff.getJoinKeyValue());
+        entity.setMismatchField(diff.getMismatchField());
+        entity.setSourceValue(diff.getSourceValue());
+        entity.setTargetValue(diff.getTargetValue());
+        entity.setTaskId(diff.getTaskId());
+        entity.setDescription(diff.getDescription());
+        return entity;
     }
 }

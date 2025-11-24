@@ -10,6 +10,8 @@ import com.coding.cz.recon.util.JoinFieldListConverter;
 import com.coding.cz.recon.util.JsonToListConverter;
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.ToString;
+
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -59,8 +61,10 @@ public class ReconciliationRuleEntity implements java.io.Serializable{
         private String targetField;
         private String type; // 比对方式：EQUAL等
         private String fieldType; // 字段类型：DECIMAL/STRING等
+        private String allowError;
     }
     @Data
+    @ToString
     public static class JoinField implements java.io.Serializable{
         private static final long serialVersionUID = 1L;
         private String sourceField;

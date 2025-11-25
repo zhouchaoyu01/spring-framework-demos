@@ -11,8 +11,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
-import org.apache.flink.api.common.state.MapState;
-import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.*;
+
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.configuration.Configuration;
@@ -60,7 +60,7 @@ public class FlinkReconciliationJob {
         String targetTable = params.get("targetTable", "channel_transaction");
 
         long reconDateEpoch = Long.parseLong(params.get("reconDateEpoch", String.valueOf(LocalDate.now().toEpochDay())));
-        LocalDate reconDate = LocalDate.of(2025,5,6).minusDays(1); // 默认 T-1
+        LocalDate reconDate = LocalDate.of(2025,5,9).minusDays(1); // 默认 T-1
 
         // Example rule: join on order_id; compare amount and status
         ReconciliationRuleEntity rule = exampleRule();
@@ -85,8 +85,8 @@ public class FlinkReconciliationJob {
         )).name("jdbc-source-target");
 
         // Key by join key (stringified composite key)
-        DataStream<DataRecord> keyedSource = sourceStream.keyBy(r -> r.getJoinKey(rule.getJoinFields(), true));
-        DataStream<DataRecord> keyedTarget = targetStream.keyBy(r -> r.getJoinKey(rule.getJoinFields(), false));
+        DataStream<DataRecord> keyedSource = sourceStream.keyBy(r -> r.getJoinKey(r,rule.getJoinFields(), true));
+        DataStream<DataRecord> keyedTarget = targetStream.keyBy(r -> r.getJoinKey(r,rule.getJoinFields(), false));
 
         ConnectedStreams<DataRecord, DataRecord> connected = keyedSource.connect(keyedTarget);
 
@@ -112,6 +112,8 @@ public class FlinkReconciliationJob {
         cf1.setSourceField("amount"); cf1.setTargetField("amount"); cf1.setFieldType("DECIMAL"); cf1.setType("EQUAL");
         ReconciliationRuleEntity.CompareField cf2 = new ReconciliationRuleEntity.CompareField();
         cf2.setSourceField("status"); cf2.setTargetField("channel_status"); cf2.setFieldType("STRING"); cf2.setType("EQUAL");
+//        ReconciliationRuleEntity.CompareField cf3 = new ReconciliationRuleEntity.CompareField();
+//        cf2.setSourceField("status"); cf3.setTargetField("channel_status"); cf3.setFieldType("STRING"); cf2.setType("EQUAL");
         rule.setCompareFields(Arrays.asList(cf1, cf2));
 
         // Filter example using T-1 placeholder
@@ -214,12 +216,15 @@ public class FlinkReconciliationJob {
     }
 
     // -------------------- CoProcessFunction --------------------
-    public static class ReconciliationCoProcessFunction extends KeyedCoProcessFunction<String, DataRecord, DataRecord, ReconciliationDiff> {
+    public static class ReconciliationCoProcessFunction
+            extends KeyedCoProcessFunction<String, DataRecord, DataRecord, ReconciliationDiff> {
+
         private final ReconciliationRuleEntity rule;
         private final long waitMillis;
 
-        private transient MapState<String, DataRecord> leftState; // store single record per key for left
-        private transient MapState<String, DataRecord> rightState; // store single record per key for right
+        private transient ListState<DataRecord> leftList;
+        private transient ListState<DataRecord> rightList;
+        private transient ValueState<Boolean> timerRegistered;
 
         public ReconciliationCoProcessFunction(ReconciliationRuleEntity rule, long waitMillis) {
             this.rule = rule;
@@ -227,58 +232,93 @@ public class FlinkReconciliationJob {
         }
 
         @Override
-        public void open(Configuration parameters) throws Exception {
-            MapStateDescriptor<String, DataRecord> leftDesc = new MapStateDescriptor<>("leftState", String.class, DataRecord.class);
-            leftState = getRuntimeContext().getMapState(leftDesc);
-            MapStateDescriptor<String, DataRecord> rightDesc = new MapStateDescriptor<>("rightState", String.class, DataRecord.class);
-            rightState = getRuntimeContext().getMapState(rightDesc);
+        public void open(Configuration parameters) {
+            leftList = getRuntimeContext().getListState(
+                    new ListStateDescriptor<>("leftList", DataRecord.class));
+
+            rightList = getRuntimeContext().getListState(
+                    new ListStateDescriptor<>("rightList", DataRecord.class));
+
+            timerRegistered = getRuntimeContext().getState(
+                    new ValueStateDescriptor<>("timerRegistered", Boolean.class));
         }
 
         @Override
         public void processElement1(DataRecord left, Context ctx, Collector<ReconciliationDiff> out) throws Exception {
-            String key = ctx.getCurrentKey();
-            if (rightState.contains(key)) {
-                DataRecord right = rightState.get(key);
-                out.collect(compareAndBuild(key, left, right));
-                rightState.remove(key);
+            List<DataRecord> rights = iterableToList(rightList.get());
+
+            if (!rights.isEmpty()) {
+                // 取一个 pair 出来比较
+                DataRecord right = rights.remove(0);
+                out.collect(compareAndBuild(ctx.getCurrentKey(), left, right));
+
+                rightList.update(rights);
             } else {
-                leftState.put(key, left);
-                long timerTs = ctx.timerService().currentProcessingTime() + waitMillis;
-                ctx.timerService().registerProcessingTimeTimer(timerTs);
+                leftList.add(left);
+                registerOnce(ctx);
             }
         }
 
         @Override
         public void processElement2(DataRecord right, Context ctx, Collector<ReconciliationDiff> out) throws Exception {
-            String key = ctx.getCurrentKey();
-            if (leftState.contains(key)) {
-                DataRecord left = leftState.get(key);
-                out.collect(compareAndBuild(key, left, right));
-                leftState.remove(key);
+
+            List<DataRecord> lefts = iterableToList(leftList.get());
+
+            if (!lefts.isEmpty()) {
+                DataRecord left = lefts.remove(0);
+                out.collect(compareAndBuild(ctx.getCurrentKey(), left, right));
+
+                leftList.update(lefts);
             } else {
-                rightState.put(key, right);
-                long timerTs = ctx.timerService().currentProcessingTime() + waitMillis;
-                ctx.timerService().registerProcessingTimeTimer(timerTs);
+                rightList.add(right);
+                registerOnce(ctx);
             }
         }
 
         @Override
         public void onTimer(long timestamp, OnTimerContext ctx, Collector<ReconciliationDiff> out) throws Exception {
             String key = ctx.getCurrentKey();
-            if (leftState.contains(key) && !rightState.contains(key)) {
+
+            List<DataRecord> lefts = iterableToList(leftList.get());
+            List<DataRecord> rights = iterableToList(rightList.get());
+
+            // ① left-only
+            for (DataRecord l : lefts) {
                 out.collect(ReconciliationDiff.sourceOnly(key, 0L));
-                leftState.remove(key);
             }
-            if (rightState.contains(key) && !leftState.contains(key)) {
+
+            // ② right-only
+            for (DataRecord r : rights) {
                 out.collect(ReconciliationDiff.targetOnly(key, 0L));
-                rightState.remove(key);
             }
+
+            leftList.clear();
+            rightList.clear();
+            timerRegistered.clear();
+        }
+
+        private void registerOnce(Context ctx) throws Exception {
+            Boolean reg = timerRegistered.value();
+            if (reg == null || !reg) {
+                long ts = ctx.timerService().currentProcessingTime() + waitMillis;
+                ctx.timerService().registerProcessingTimeTimer(ts);
+                timerRegistered.update(true);
+            }
+        }
+
+        private List<DataRecord> iterableToList(Iterable<DataRecord> it) {
+            List<DataRecord> list = new ArrayList<>();
+            if (it != null) {
+                for (DataRecord r : it) list.add(r);
+            }
+            return list;
         }
 
         private ReconciliationDiff compareAndBuild(String joinKey, DataRecord left, DataRecord right) {
             List<String> mismatches = new ArrayList<>();
             StringBuilder srcVals = new StringBuilder();
             StringBuilder tgtVals = new StringBuilder();
+
             for (ReconciliationRuleEntity.CompareField cf : rule.getCompareFields()) {
                 String s = left.getFields().get(cf.getSourceField());
                 String t = right.getFields().get(cf.getTargetField());
@@ -288,14 +328,21 @@ public class FlinkReconciliationJob {
                     tgtVals.append(cf.getTargetField()).append("=").append(t).append(";");
                 }
             }
+
             if (mismatches.isEmpty()) {
                 return ReconciliationDiff.match(joinKey, 0L);
             } else {
-                String mm = String.join(",", mismatches);
-                return ReconciliationDiff.fieldMismatch(joinKey, mm, srcVals.toString(), tgtVals.toString(), 0L);
+                return ReconciliationDiff.fieldMismatch(
+                        joinKey,
+                        String.join(",", mismatches),
+                        srcVals.toString(),
+                        tgtVals.toString(),
+                        0L
+                );
             }
         }
     }
+
 
     // -------------------- Sink --------------------
     public static class JdbcDiffSink extends RichSinkFunction<ReconciliationDiff> {
@@ -323,7 +370,7 @@ public class FlinkReconciliationJob {
 
         @Override
         public void invoke(ReconciliationDiff value, Context context) throws Exception {
-            ps.setLong(1, 0L);
+            ps.setLong(1, 1L);
             ps.setString(2, value.getDiffType());
             ps.setString(3, value.getJoinKeyValue());
             ps.setString(4, value.getMismatchField());
@@ -363,13 +410,15 @@ public class FlinkReconciliationJob {
             return fields;
         }
 
-        public String getJoinKey(List<ReconciliationRuleEntity.JoinField> joinFields, boolean isSource) {
-            List<String> parts = new ArrayList<>();
+        public String getJoinKey(DataRecord r,List<ReconciliationRuleEntity.JoinField> joinFields, boolean isSource) {
+            StringBuilder builder = new StringBuilder();
             for (ReconciliationRuleEntity.JoinField jf : joinFields) {
-                String f = isSource ? jf.getSourceField() : jf.getTargetField();
-                parts.add(String.valueOf(fields.get(f)));
+                String field = isSource ? jf.getSourceField() : jf.getTargetField();
+                String val = r.getFields().getOrDefault(field, "");
+                builder.append(val.trim()).append("|");
             }
-            return String.join("|", parts);
+            builder.delete(builder.length() - 1, builder.length());
+            return builder.toString();
         }
     }
 

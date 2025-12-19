@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cz.v2.mapper.LocalTransactionMapper">
+
+    <resultMap id="BaseResultMap" type="com.cz.v2.entity.LocalTransaction">
+            <result property="orderId" column="order_id" jdbcType="VARCHAR"/>
+            <result property="amount" column="amount" jdbcType="DECIMAL"/>
+            <result property="status" column="status" jdbcType="VARCHAR"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        order_id,amount,status
+    </sql>
+    <insert id="insertBatch">
+        insert into local_transaction (order_id,amount,status) values
+        <foreach collection="list" item="item" separator=",">
+            (#{item.orderId},#{item.amount},#{item.status})
+        </foreach>
+    </insert>
+    <select id="selectByTimeRange" resultType="com.cz.v2.entity.LocalTransaction">
+        select
+        <include refid="Base_Column_List"/>
+        from local_transaction
+        where create_time
+        between CONCAT(#{startTime}, ' 00:00:00') AND CONCAT(#{endTime}, ' 23:59:59')
+        order by order_id
+        limit #{startIndex},#{pageSize}
+    </select>
+</mapper>

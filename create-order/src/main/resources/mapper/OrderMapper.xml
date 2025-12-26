@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.couponorder.mapper.OrderMapper">
+
+    <insert id="insert" parameterType="com.example.couponorder.entity.OrderDO">
+        INSERT INTO order_main (order_id, user_id, coupon_id, status, create_time, update_time)
+        VALUES (#{orderId}, #{userId}, #{couponId}, #{status}, #{createTime}, #{updateTime})
+    </insert>
+
+    <update id="updateById" parameterType="com.example.couponorder.entity.OrderDO">
+        UPDATE order_main
+        SET status = #{status},
+            update_time = #{updateTime}
+        WHERE order_id = #{orderId}
+    </update>
+
+    <select id="selectById" parameterType="String" resultType="com.example.couponorder.entity.OrderDO">
+        SELECT order_id, user_id, coupon_id, status, create_time, update_time
+        FROM order_main
+        WHERE order_id = #{orderId}
+    </select>
+
+    <select id="countByUserIdAndBizType" resultType="Integer">
+        SELECT COUNT(1)
+        FROM order_main
+        WHERE user_id = #{userId}
+          AND status = 'CREATED'
+    </select>
+</mapper>

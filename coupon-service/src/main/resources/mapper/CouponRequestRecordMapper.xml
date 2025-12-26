@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.coupon.mapper.CouponRequestRecordMapper">
+
+    <insert id="insert" parameterType="com.example.coupon.entity.CouponRequestRecordDO">
+        INSERT INTO coupon_request_record (request_id, coupon_id, order_id, operation_type, create_time)
+        VALUES (#{requestId}, #{couponId}, #{orderId}, #{operationType}, #{createTime})
+    </insert>
+
+    <select id="countByRequestIdAndCouponIdAndOrderId" resultType="Integer">
+        SELECT COUNT(1)
+        FROM coupon_request_record
+        WHERE request_id = #{requestId}
+          AND coupon_id = #{couponId}
+          AND order_id = #{orderId}
+    </select>
+</mapper>

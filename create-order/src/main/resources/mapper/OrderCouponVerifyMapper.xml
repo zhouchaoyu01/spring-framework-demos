@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.couponorder.mapper.OrderCouponVerifyMapper">
+
+    <insert id="insert" parameterType="com.example.couponorder.entity.OrderCouponVerifyDO">
+        INSERT INTO order_coupon_verify (order_id, coupon_id, verify_status, unique_key, create_time, update_time)
+        VALUES (#{orderId}, #{couponId}, #{verifyStatus}, #{uniqueKey}, #{createTime}, #{updateTime})
+    </insert>
+
+    <update id="updateByOrderIdAndCouponId" parameterType="com.example.couponorder.entity.OrderCouponVerifyDO">
+        UPDATE order_coupon_verify
+        <set>
+            <if test="verifyStatus != null">verify_status = #{verifyStatus},</if>
+            <if test="verifyTime != null">verify_time = #{verifyTime},</if>
+            <if test="rollbackTime != null">rollback_time = #{rollbackTime},</if>
+            <if test="extMsg != null">ext_msg = #{extMsg},</if>
+            update_time = #{updateTime}
+        </set>
+        WHERE order_id = #{orderId} AND coupon_id = #{couponId}
+    </update>
+
+    <select id="selectByOrderId" parameterType="String" resultType="com.example.couponorder.entity.OrderCouponVerifyDO">
+        SELECT id, order_id, coupon_id, verify_status, verify_time, rollback_time, ext_msg, unique_key, create_time, update_time
+        FROM order_coupon_verify
+        WHERE order_id = #{orderId}
+    </select>
+
+    <select id="selectByVerifyStatusAndOrderNotCreated" parameterType="String" resultType="com.example.couponorder.entity.OrderCouponVerifyDO">
+        SELECT v.id, v.order_id, v.coupon_id, v.verify_status, v.verify_time, v.rollback_time, v.ext_msg, v.unique_key, v.create_time, v.update_time
+        FROM order_coupon_verify v
+        LEFT JOIN order_main o ON v.order_id = o.order_id
+        WHERE v.verify_status = #{verifyStatus}
+          AND (o.status != 'CREATED' OR o.status IS NULL)
+    </select>
+
+    <select id="selectByUniqueKey" parameterType="String" resultType="com.example.couponorder.entity.OrderCouponVerifyDO">
+        SELECT id, order_id, coupon_id, verify_status, verify_time, rollback_time, ext_msg, unique_key, create_time, update_time
+        FROM order_coupon_verify
+        WHERE unique_key = #{uniqueKey}
+    </select>
+</mapper>

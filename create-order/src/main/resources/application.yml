@@ -1,0 +1,74 @@
+server:
+  port: 8099
+spring:
+  application:
+    name: coupon-order-service
+  datasource:
+    url: jdbc:mysql://localhost:3306/test_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    username: root
+    password: root123
+  data:
+    redis:
+      # Redis数据库索引（默认为0）
+      database: 13
+      # Redis服务器地址
+      host: 192.168.26.143
+      # Redis服务器连接端口
+      port: 6379
+      # Redis服务器连接密码（默认为空）
+      password:  OadcIH&kywx91
+      # 连接超时时间（毫秒）
+      connect-timeout: 5000
+      lettuce:
+        pool:
+          # 连接池最大连接数（使用负值表示没有限制）
+          max-active: 8
+          # 连接池最大阻塞等待时间（使用负值表示没有限制）
+          max-wait: -1
+          # 连接池中的最大空闲连接
+          max-idle: 8
+    task:
+      scheduling:
+        pool:
+          size: 5
+        thread-name-prefix: order-compensate-
+
+# 优惠券服务配置
+coupon:
+  service:
+    url: http://localhost:8081
+
+# Feign配置
+feign:
+  client:
+    config:
+      default:
+        connect-timeout: 5000
+        read-timeout: 5000
+        logger-level: full
+  circuitbreaker:
+    enabled: true
+
+## Redisson配置
+redisson:
+  singleServerConfig:
+    address: redis://192.168.26.143:6379
+    database: 13
+    connectionMinimumIdleSize: 10
+    connectionPoolSize: 64
+    idleConnectionTimeout: 10000
+    connectTimeout: 10000
+    timeout: 3000
+
+
+# 日志配置
+logging:
+  level:
+    root: info
+    com.example.couponorder: debug
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.example.couponorder.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl

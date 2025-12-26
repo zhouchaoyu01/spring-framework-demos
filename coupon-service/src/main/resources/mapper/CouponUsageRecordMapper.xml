@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.coupon.mapper.CouponUsageRecordMapper">
+
+    <insert id="insert" parameterType="com.example.coupon.entity.CouponUsageRecordDO">
+        INSERT INTO coupon_usage_record (record_id, coupon_id, user_id, order_id, usage_type, 
+                                        usage_time, remark, create_time)
+        VALUES (#{recordId}, #{couponId}, #{userId}, #{orderId}, #{usageType}, 
+                #{usageTime}, #{remark}, #{createTime})
+    </insert>
+
+    <select id="selectByCouponIdAndOrderId" resultType="com.example.coupon.entity.CouponUsageRecordDO">
+        SELECT id, record_id, coupon_id, user_id, order_id, usage_type, 
+               usage_time, remark, create_time
+        FROM coupon_usage_record
+        WHERE coupon_id = #{couponId}
+          AND order_id = #{orderId}
+    </select>
+
+    <select id="selectVerifyRecord" resultType="com.example.coupon.entity.CouponUsageRecordDO">
+        SELECT id, record_id, coupon_id, user_id, order_id, usage_type, 
+               usage_time, remark, create_time
+        FROM coupon_usage_record
+        WHERE coupon_id = #{couponId}
+          AND order_id = #{orderId}
+          AND usage_type = 'VERIFY'
+    </select>
+
+    <select id="selectRollbackRecord" resultType="com.example.coupon.entity.CouponUsageRecordDO">
+        SELECT id, record_id, coupon_id, user_id, order_id, usage_type, 
+               usage_time, remark, create_time
+        FROM coupon_usage_record
+        WHERE coupon_id = #{couponId}
+          AND order_id = #{orderId}
+          AND usage_type = 'ROLLBACK'
+    </select>
+</mapper>

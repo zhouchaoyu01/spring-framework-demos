@@ -19,6 +19,8 @@
         <module>mdc-thread-log-trace</module>
         <module>openAPI-rsa</module>
         <module>data-switch</module>
+        <module>create-order</module>
+        <module>coupon-service</module>
     </modules>
 
     <!--版本号管理-->

@@ -12,11 +12,11 @@ spring:
       # Redis数据库索引（默认为0）
       database: 13
       # Redis服务器地址
-      host: 192.168.26.143
+      host: 192.168.14.245
       # Redis服务器连接端口
-      port: 6379
+      port: 16379
       # Redis服务器连接密码（默认为空）
-      password:  OadcIH&kywx91
+      password: otmsredis
       # 连接超时时间（毫秒）
       connect-timeout: 5000
       lettuce:
@@ -36,7 +36,7 @@ spring:
 # 优惠券服务配置
 coupon:
   service:
-    url: http://localhost:8081
+    url: http://localhost:8098
 
 # Feign配置
 feign:

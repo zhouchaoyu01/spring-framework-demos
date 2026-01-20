@@ -1,46 +1,46 @@
 package com.example.couponorder.service;
 
-import com.example.couponorder.client.CouponClient;
-import com.example.couponorder.client.CouponVerifyReq;
-import com.example.couponorder.client.CouponVerifyResp;
-import com.example.couponorder.entity.OrderDO;
-import com.example.couponorder.entity.OrderCouponVerifyDO;
-import com.example.couponorder.exception.BusinessException;
-import com.example.couponorder.mapper.OrderMapper;
-import com.example.couponorder.mapper.OrderCouponVerifyMapper;
-import lombok.extern.slf4j.Slf4j;
-import org.redisson.api.RLock;
-import org.redisson.api.RedissonClient;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
+import com.alibaba.fastjson2.JSON;
+import com.example.couponorder.client.*;
+import com.example.couponorder.entity.OrderCouponVerifyDO;
+import com.example.couponorder.entity.OrderDO;
+import com.example.couponorder.exception.BusinessException;
+import com.example.couponorder.mapper.OrderCouponVerifyMapper;
+import com.example.couponorder.mapper.OrderMapper;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.util.StringUtils;
+
+import java.net.SocketTimeoutException;
+import java.time.Duration;
 import java.util.Date;
 import java.util.UUID;
+import java.util.concurrent.Executor;
 
-/**
- * 订单创建服务
- */
 @Slf4j
 @Service
 public class OrderCreateService {
 
     @Autowired
     private OrderMapper orderMapper;
-
     @Autowired
     private OrderCouponVerifyMapper verifyMapper;
-
     @Autowired
     private CouponClient couponClient;
+    @Autowired
+    private StringRedisTemplate redisTemplate;
+    @Autowired
+    private TransactionTemplate transactionTemplate; // 用于编排细粒度事务
 
-    @Autowired
-    private RepeatSubmitGuard repeatSubmitGuard;
-    @Autowired
-    private RedissonClient redissonClient;
-    private Integer requestNum = 0;
-    private Integer requestS = 0;
-    private Integer requestF = 0;
+    // 常量定义
+    private static final String IDEMPOTENT_PREFIX = "order:req:";
+    private static final String WAL_PREFIX = "sys:order:flow:";
     /**
      * 创建订单请求
      */
@@ -103,173 +103,199 @@ public class OrderCreateService {
     }
 
     /**
-     * 创建订单核心逻辑（无分布式事务+无订单中间状态）
+     * 创建订单核心逻辑 (优化版)
      */
-    public String createOrder(OrderCreateReq req) {
+    public String createOrder(OrderCreateReq req) throws Exception {
+        String requestId = req.getRequestId();
+        String userId = String.valueOf(req.getUserId());
+        String orderId = UUID.randomUUID().toString(); // 建议生产环境换成雪花算法
 
-        // 1 生成订单ID
-        String orderId = UUID.randomUUID().toString();
-        requestNum++;
-        String lockName = "order:create:" + req.getUserId();
-        RLock lock = redissonClient.getLock(lockName);
+        // -------------------------------------------------------
+        // 1. [性能与幂等] Redis 原子防重 (Fail-Fast，无锁设计)
+        // -------------------------------------------------------
+        // SET key value NX EX 600
+        Boolean isFirst = redisTemplate.opsForValue()
+                .setIfAbsent(IDEMPOTENT_PREFIX + requestId, "PROCESSING", Duration.ofMinutes(10));
+
+        if (Boolean.FALSE.equals(isFirst)) {
+            // 快速失败，不阻塞线程
+            throw new BusinessException("请勿重复提交，您的请求正在处理中");
+        }
+
         try {
-            // 2. 尝试加锁：等待3秒，持有10秒，超时自动释放
-            boolean locked = lock.tryLock(3, 10, java.util.concurrent.TimeUnit.SECONDS);
-            if (locked) {
-                requestS++;
-                // 1. 防重校验（RequestId+数据库唯一索引）
-                if (!repeatSubmitGuard.validateRequestId(req.getRequestId(), req.getUserId())) {
-                    throw new BusinessException("重复请求，请稍后再试");
-                }
+            // -------------------------------------------------------
+            // 2. [数据安全] WAL 预写日志 (关键：防 JVM 宕机导致券丢失)
+            // -------------------------------------------------------
+            // 如果后续步骤宕机，后台 Job 扫描此 Key 发现无 DB 记录，会自动触发冲正
+            String walKey = WAL_PREFIX + orderId;
+            redisTemplate.opsForValue().set(walKey, JSON.toJSONString(req), Duration.ofMinutes(30));
 
+            boolean couponUsed = false;
+            String extMsg = "";
 
-                String couponId = req.getCouponId();
-
-                // 3. 本地事务：创建订单（初始状态FAILED）+ 写入核销记录（INIT）
-                try {
-                    initOrderAndVerifyRecord(orderId, req, couponId);
-                } catch (Exception e) {
-                    log.error("订单{}初始化失败", orderId, e);
-                    throw new BusinessException("订单创建失败");
-                }
-
-                // 4. 如果没有优惠券，直接更新订单为CREATED
-                if (couponId == null || couponId.isEmpty()) {
-                    try {
-                        updateOrderToCreated(orderId);
-                        return orderId;
-                    } catch (Exception e) {
-                        log.error("订单{}更新为CREATED失败", orderId, e);
-                        throw new BusinessException("订单创建中，请稍后刷新");
-                    }
-                }
-
-                // 5. 调用优惠券核销接口（外部HTTP，无事务包裹）
-                boolean verifySuccess = false;
-                String extMsg = "";
+            // -------------------------------------------------------
+            // 3. [外部调用] 核销优惠券 (绝不要放在 DB 事务内！)
+            // -------------------------------------------------------
+            if (StringUtils.hasText(req.getCouponId())) {
                 try {
                     CouponVerifyReq verifyReq = new CouponVerifyReq();
-                    verifyReq.setCouponId(couponId);
+                    verifyReq.setCouponId(req.getCouponId());
                     verifyReq.setOrderId(orderId);
                     verifyReq.setUserId(req.getUserId());
-                    log.info("订单{}调用优惠券核销接口：{}", orderId, couponId);
-                    CouponVerifyResp resp = couponClient.verifyCoupon(verifyReq);
-                    verifySuccess = resp.isSuccess();
-                    extMsg = resp.getMsg();
-                    log.info("订单{}优惠券核销结果：{}", orderId, verifySuccess);
-                } catch (Exception e) {
-                    log.error("订单{}核销优惠券失败", orderId, e);
-                    extMsg = "核销接口调用异常：" + e.getMessage();
-                    // 6. 核销失败：更新核销记录为FAILED，订单保持FAILED
-                    updateVerifyRecord(orderId, couponId, "FAILED", extMsg);
-                    throw new BusinessException("优惠券核销失败");
-                }
 
-                // 7. 核销成功：更新核销记录为SUCCESS + 订单改为CREATED
-                if (verifySuccess) {
-                    try {
-                        updateOrderAndVerifySuccess(orderId, couponId, extMsg);
-                    } catch (Exception e) {
-                        log.error("订单{}核销成功但更新状态失败，需补偿", orderId, e);
-                        // 无需立即处理，定时任务兜底，返回"订单创建中"
-                        throw new BusinessException("订单创建中，请稍后刷新");
+                    log.info("开始调用优惠券核销: {}", orderId);
+                    CouponVerifyResp resp = couponClient.verifyCoupon(verifyReq);
+
+                    if (!resp.isSuccess()) {
+                        // 明确的业务失败，可以安全地抛出异常并允许重试
+                        throw new BusinessException("优惠券无效: " + resp.getMsg());
                     }
-                }else {
-                    throw new BusinessException("优惠券："+couponId+" 核销失败，已经被核销");
+                    couponUsed = true;
+                    extMsg = resp.getMsg();
+
+                } catch (Exception e) {
+                    handleCouponException(e, requestId, walKey);
                 }
-            } else {
-                requestF++ ;
-                log.error("获取锁失败，跳过本次补偿");
-                throw new BusinessException("获取锁失败，跳过本次补偿");
             }
-        }catch (Exception e){
-            log.error("订单创建失败", e);
-            throw new BusinessException("订单创建失败");
-        }finally {
-            log.info("请求总数：{}，获取到锁数：{}，获取失败数：{}", requestNum, requestS, requestF);
-            // 4. 释放锁（必须在finally中，避免死锁）
-            if (lock.isHeldByCurrentThread()) {
-                lock.unlock();
+
+            // -------------------------------------------------------
+            // 4. [落库] 极短事务 (只包含 DB 操作)
+            // -------------------------------------------------------
+            final boolean finalCouponUsed = couponUsed;
+            final String finalExtMsg = extMsg;
+
+            transactionTemplate.execute(status -> {
+                try {
+                    // 4.1 插入订单 (直接 CREATED，无需 Insert -> Update)
+                    OrderDO order = new OrderDO();
+                    order.setOrderId(orderId);
+                    order.setUserId(req.getUserId());
+                    order.setCouponId(req.getCouponId());
+                    order.setStatus("CREATED");
+                    order.setCreateTime(new Date());
+                    order.setUpdateTime(new Date());
+                    orderMapper.insert(order);
+
+                    // 4.2 插入核销记录 (如果用了券)
+                    if (finalCouponUsed) {
+                        OrderCouponVerifyDO verifyDO = new OrderCouponVerifyDO();
+                        verifyDO.setOrderId(orderId);
+                        verifyDO.setCouponId(req.getCouponId());
+                        verifyDO.setVerifyStatus("SUCCESS");
+                        verifyDO.setVerifyTime(new Date());
+                        verifyDO.setExtMsg(finalExtMsg);
+                        verifyDO.setUniqueKey(req.getCouponId() + "_" + orderId); // 唯一索引防重
+                        verifyDO.setCreateTime(new Date());
+                        verifyMapper.insert(verifyDO);
+                    }
+                    return Boolean.TRUE;
+                } catch (DuplicateKeyException e) {
+                    // 极低概率：UUID 碰撞或数据库层面拦截了重复请求
+                    log.warn("订单落库主键冲突: {}", orderId);
+                    status.setRollbackOnly();
+                    throw new BusinessException("订单已存在");
+                } catch (Exception e) {
+                    // DB 异常回滚
+                    status.setRollbackOnly();
+                    throw e;
+                }
+            });
+
+            // -------------------------------------------------------
+            // 5. [清理] 流程成功，删除 WAL 日志
+            // -------------------------------------------------------
+            // 此时订单已在库，后续不再需要 Job 兜底，保留 IDEMPOTENT Key 防止重复提交
+            redisTemplate.delete(walKey);
+
+        } catch (Exception e) {
+            log.error("下单流程异常 orderId={}", orderId, e);
+            // 触发尽力而为的补偿（针对 Step 4 DB 失败但 Step 3 券已扣的情况）
+            if (StringUtils.hasText(req.getCouponId())) {
+                asyncReverseCoupon(req.getCouponId(), req.getUserId(), orderId);
             }
+            throw e; // 继续向上抛出
         }
 
         return orderId;
     }
 
     /**
-     * 本地事务：初始化订单（FAILED）+ 核销记录（INIT）
+     * 专门处理优惠券调用异常
      */
-    @Transactional(rollbackFor = Exception.class)
-    public void initOrderAndVerifyRecord(String orderId, OrderCreateReq req, String couponId) {
-        // 创建订单（初始状态FAILED）
-        OrderDO order = new OrderDO();
-        order.setOrderId(orderId);
-        order.setUserId(req.getUserId());
-        order.setCouponId(couponId);
-        order.setStatus("FAILED"); // 初始状态为失败，核销成功后再改
-        order.setCreateTime(new Date());
-        order.setUpdateTime(new Date());
-        orderMapper.insert(order);
-
-        // 如果有优惠券，写入核销记录（INIT）
-        if (couponId != null && !couponId.isEmpty()) {
-            OrderCouponVerifyDO verifyDO = new OrderCouponVerifyDO();
-            verifyDO.setOrderId(orderId);
-            verifyDO.setCouponId(couponId);
-            verifyDO.setVerifyStatus("INIT");
-            verifyDO.setUniqueKey(couponId + "_" + orderId); // 防重复核销
-            verifyDO.setCreateTime(new Date());
-            verifyDO.setUpdateTime(new Date());
-            verifyMapper.insert(verifyDO);
+    private void handleCouponException(Exception e, String requestId, String walKey) throws Exception {
+        if (e instanceof SocketTimeoutException) {
+            // 【关键】超时异常（薛定谔状态）：不能删防重 Key，不能删 WAL
+            // 让用户稍后查询，或者等待后台 Job 最终确认
+            log.warn("优惠券核销超时，状态未知");
+            throw new BusinessException("系统繁忙，正在确认核销结果，请勿重复下单");
+        } else if (e instanceof BusinessException) {
+            // 明确的业务失败（如券过期）：清理 Redis，允许用户换张券重试
+            redisTemplate.delete(IDEMPOTENT_PREFIX + requestId);
+            redisTemplate.delete(walKey);
+            throw e;
+        } else {
+            // 其他网络错误（Connection Refused）：视为未核销，允许重试
+            redisTemplate.delete(IDEMPOTENT_PREFIX + requestId);
+            redisTemplate.delete(walKey);
+            throw new BusinessException("优惠券服务暂时不可用: " + e.getMessage());
         }
     }
 
-    /**
-     * 本地事务：更新订单为CREATED
-     */
-    @Transactional(rollbackFor = Exception.class)
-    public void updateOrderToCreated(String orderId) {
-        OrderDO order = new OrderDO();
-        order.setOrderId(orderId);
-        order.setStatus("CREATED");
-        order.setUpdateTime(new Date());
-        orderMapper.updateById(order);
-    }
+    // ... 其他依赖注入
+
+    // 注入专门用于"旁路逻辑"的线程池，避免占用 Tomcat 主线程
+    @Autowired
+    @Qualifier("compensationExecutor")
+    private Executor compensationExecutor;
 
     /**
-     * 本地事务：更新订单为CREATED + 核销记录为SUCCESS
+     * 异步冲正逻辑 (Best Effort 尽力而为模式)
+     *
+     * 设计思路：
+     * 1. 这是一个"非关键路径"，不能阻塞下单主流程。
+     * 2. 如果这里执行成功，顺手把 Redis 里的 WAL 日志删了，帮兜底 Job 减轻负担。
+     * 3. 如果这里执行失败（线程池满、网络超时），不做重试，完全交给兜底 Job 处理。
      */
-    @Transactional(rollbackFor = Exception.class)
-    public void updateOrderAndVerifySuccess(String orderId, String couponId, String extMsg) {
-        // 更新订单状态为CREATED
-        OrderDO order = new OrderDO();
-        order.setOrderId(orderId);
-        order.setStatus("CREATED");
-        order.setUpdateTime(new Date());
-        orderMapper.updateById(order);
+    private void asyncReverseCoupon(String couponId, Long userId, String orderId) {
+        try {
+            // 提交到独立线程池执行
+            compensationExecutor.execute(() -> {
+                String logPrefix = "[异步冲正-" + orderId + "] ";
+                try {
+                    log.info(logPrefix + "开始执行");
 
-        // 更新核销记录为SUCCESS
-        OrderCouponVerifyDO verifyDO = new OrderCouponVerifyDO();
-        verifyDO.setOrderId(orderId);
-        verifyDO.setCouponId(couponId);
-        verifyDO.setVerifyStatus("SUCCESS");
-        verifyDO.setVerifyTime(new Date());
-        verifyDO.setExtMsg(extMsg);
-        verifyDO.setUpdateTime(new Date());
-        verifyMapper.updateByOrderIdAndCouponId(verifyDO);
+                    // 1. 组装请求
+                    CouponRollbackReq req = new CouponRollbackReq();
+                    req.setCouponId(couponId);
+                    req.setOrderId(orderId);
+                    req.setReason("下单异常自动回滚");
+
+                    // 2. 调用外部接口 (RPC)
+                    CouponRollbackResp resp = couponClient.rollbackCoupon(req);
+
+                    // 3. 处理结果
+                    if (resp != null && resp.isSuccess()) {
+                        log.info(logPrefix + "执行成功，清理 WAL 日志");
+                        // 【关键优化】
+                        // 既然已经冲正成功了，就删除 Step 2 留下的 WAL Key。
+                        // 这样兜底 Job 就不需要再扫描处理这条数据了，减少系统开销。
+                        redisTemplate.delete(WAL_PREFIX + orderId);
+                        // 同时清理防重 Token (视业务策略而定，通常建议保留防重Token防止用户立刻重试)
+                        // redisTemplate.delete(IDEMPOTENT_PREFIX + req.getRequestId());
+                    } else {
+                        log.warn(logPrefix + "外部系统返回失败: {}", resp != null ? resp.getMsg() : "null");
+                        // 这里不需要抛异常，也不需要重试，留给 Job 稍后处理
+                    }
+                } catch (Exception e) {
+                    log.error(logPrefix + "执行异常，将等待 Job 兜底", e);
+                    // 吞掉异常，确保线程安全退出
+                }
+            });
+        } catch (Exception e) {
+            // 捕获任务提交阶段的异常（例如线程池队列满了拒绝策略抛出的异常）
+            log.error("[异步冲正] 任务提交失败，将等待 Job 兜底: orderId={}", orderId, e);
+        }
     }
 
-    /**
-     * 本地事务：更新核销记录状态
-     */
-    @Transactional(rollbackFor = Exception.class)
-    public void updateVerifyRecord(String orderId, String couponId, String status, String extMsg) {
-        OrderCouponVerifyDO verifyDO = new OrderCouponVerifyDO();
-        verifyDO.setOrderId(orderId);
-        verifyDO.setCouponId(couponId);
-        verifyDO.setVerifyStatus(status);
-        verifyDO.setExtMsg(extMsg);
-        verifyDO.setUpdateTime(new Date());
-        verifyMapper.updateByOrderIdAndCouponId(verifyDO);
-    }
+    // OrderCreateReq 内部类保持不变...
 }

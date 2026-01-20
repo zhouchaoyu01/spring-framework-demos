@@ -1,0 +1,46 @@
+
+
+server:
+  port: 8787
+
+spring:
+  application:
+    name: rocketmq-demo
+
+# RocketMQ 配置
+rocketmq:
+  # NameServer 地址，根据实际环境修改
+  name-server: 127.0.0.1:9876
+
+  # 生产者配置
+  producer:
+    # 生产者组名
+    group: order-producer-group
+
+    # 发送消息超时时间（毫秒）
+    send-message-timeout: 3000
+
+    # 发送失败重试次数
+    retry-times-when-send-failed: 2
+
+    # 异步发送失败重试次数
+    retry-times-when-send-async-failed: 2
+
+    # 消息最大长度
+    max-message-size: 4194304
+
+    # 是否压缩消息
+    compress-message-body-threshold: 4096
+
+    # 是否追踪消息
+    enable-trace: true
+
+  consumer:
+    group: order-consumer-group
+    pull-batch-size: 10
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.example.rocketmq: DEBUG
+    org.apache.rocketmq: INFO

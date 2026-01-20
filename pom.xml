@@ -21,6 +21,7 @@
         <module>data-switch</module>
         <module>create-order</module>
         <module>coupon-service</module>
+        <module>spring-rocketmq-demo</module>
     </modules>
 
     <!--版本号管理-->

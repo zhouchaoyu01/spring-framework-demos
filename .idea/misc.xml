@@ -16,7 +16,6 @@
     <option name="ignoredFiles">
       <set>
         <option value="$PROJECT_DIR$/reconciliation/data-compare/pom.xml" />
-        <option value="$PROJECT_DIR$/spring-rocketmq-demo/pom.xml" />
         <option value="$PROJECT_DIR$/spring-rocketmq-demo/rocket-producer/pom.xml" />
       </set>
     </option>

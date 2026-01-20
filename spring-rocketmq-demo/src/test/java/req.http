@@ -1,0 +1,85 @@
+
+
+###
+POST http://localhost:8787/api/order/sync
+Content-Type: application/json
+
+{
+  "orderId": "ed560f3a-1f84-4482-b85e-815572a4605e",
+  "userId": "user123",
+  "productId": "product456",
+  "quantity": 2,
+  "amount": 199.99,
+  "createTime": "2026-01-08T17:21:39.0269425",
+  "status": "TEST"
+}
+
+
+
+
+###
+POST http://localhost:8787/api/order/async
+Content-Type: application/json
+
+{
+  "orderId": "ed560f3a-1f84-4482-b85e-815572a4605e",
+  "userId": "user123",
+  "productId": "product456",
+  "quantity": 2,
+  "amount": 199.99,
+  "createTime": "2026-01-08T17:21:39.0269425",
+  "status": "TEST"
+}
+
+
+
+###
+POST http://localhost:8787/api/order/delay
+Content-Type: application/json
+
+{
+  "orderId": "ed560f3a-1f84-4482-b85e-815572a4605e",
+  "userId": "user123",
+  "productId": "product456",
+  "quantity": 2,
+  "amount": 199.99,
+  "createTime": "2026-01-08T17:21:39.0269425",
+  "status": "TEST"
+}
+
+
+
+
+
+###
+POST http://localhost:8787/api/order/orderly
+Content-Type: application/json
+
+{
+  "orderId": "ed560f3a-1f84-4482-b85e-815572a4605e",
+  "userId": "user123",
+  "productId": "product456",
+  "quantity": 2,
+  "amount": 199.99,
+  "createTime": "2026-01-08T17:21:39.0269425",
+  "status": "TEST"
+}
+
+
+
+
+
+###
+POST http://localhost:8787/api/order/transaction
+Content-Type: application/json
+
+{
+  "orderId": "ed560f3a-1f84-4482-b85e-815572a4605e",
+  "userId": "user123",
+  "productId": "product456",
+  "quantity": 2,
+  "amount": 199.99,
+  "createTime": "2026-01-08T17:21:39.0269425",
+  "status": "TEST"
+}
+

@@ -142,10 +142,12 @@ public class OrderCreateService {
                     verifyReq.setCouponId(req.getCouponId());
                     verifyReq.setOrderId(orderId);
                     verifyReq.setUserId(req.getUserId());
-
-                    log.info("开始调用优惠券核销: {}", orderId);
+                    verifyReq.setRequestId(requestId);
+                    long s = System.currentTimeMillis();
+                    log.info("开始调用优惠券核销: {} startTime:{}", orderId, s);
                     CouponVerifyResp resp = couponClient.verifyCoupon(verifyReq);
-
+                    long e = System.currentTimeMillis();
+                    log.info("结束调用优惠券核销: {} endTime:{} cost:{}", orderId, e,e-s);
                     if (!resp.isSuccess()) {
                         // 明确的业务失败，可以安全地抛出异常并允许重试
                         throw new BusinessException("优惠券无效: " + resp.getMsg());
@@ -186,6 +188,7 @@ public class OrderCreateService {
                         verifyDO.setExtMsg(finalExtMsg);
                         verifyDO.setUniqueKey(req.getCouponId() + "_" + orderId); // 唯一索引防重
                         verifyDO.setCreateTime(new Date());
+                        verifyDO.setUpdateTime(new Date());
                         verifyMapper.insert(verifyDO);
                     }
                     return Boolean.TRUE;

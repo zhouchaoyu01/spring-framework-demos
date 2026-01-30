@@ -10,4 +10,5 @@ public class CouponVerifyReq {
     private String couponId;
     private String orderId;
     private Long userId;
+    private String requestId;
 }

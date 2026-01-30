@@ -13,9 +13,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.util.Date;
 import java.util.UUID;
 
@@ -36,11 +38,25 @@ public class CouponVerifyService {
     private CouponRequestRecordMapper requestRecordMapper;
     @Autowired
     private RedissonClient redissonClient;
+    @Autowired
+    private StringRedisTemplate redisTemplate;
+    private static final String IDEMPOTENT_PREFIX = "coupon:req:";
+
     /**
      * 核销优惠券
      */
     @Transactional(rollbackFor = Exception.class)
     public CouponVerifyResponse verifyCoupon(CouponVerifyRequest request) {
+
+        // SET key value NX EX 600
+        Boolean isFirst = redisTemplate.opsForValue()
+                .setIfAbsent(IDEMPOTENT_PREFIX + request.getRequestId(), "PROCESSING", Duration.ofMinutes(10));
+
+        if (Boolean.FALSE.equals(isFirst)) {
+            // 快速失败，不阻塞线程
+            throw new CouponException("请勿重复提交，您的请求正在处理中");
+        }
+
         String lockName = "coupon_verify_lock:" + request.getCouponId();
         RLock lock = redissonClient.getLock(lockName);
         try {
@@ -49,11 +65,11 @@ public class CouponVerifyService {
             if (locked) {
 
                 // 1. 防重校验
-                if (!validateRequest(request.getRequestId(), request.getCouponId(), request.getOrderId(), "VERIFY")) {
-                    log.warn("重复的核销请求：couponId={}, orderId={}, requestId={}",
-                            request.getCouponId(), request.getOrderId(), request.getRequestId());
-                    throw new CouponException("重复的核销请求", "DUPLICATE_REQUEST");
-                }
+//                if (!validateRequest(request.getRequestId(), request.getCouponId(), request.getOrderId(), "VERIFY")) {
+//                    log.warn("重复的核销请求：couponId={}, orderId={}, requestId={}",
+//                            request.getCouponId(), request.getOrderId(), request.getRequestId());
+//                    throw new CouponException("重复的核销请求", "DUPLICATE_REQUEST");
+//                }
 
                 // 2. 查询优惠券
                 CouponDO coupon = couponMapper.selectByCouponId(request.getCouponId());
